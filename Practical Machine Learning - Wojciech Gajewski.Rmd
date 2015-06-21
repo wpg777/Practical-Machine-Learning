@@ -1,0 +1,105 @@
+---
+title: "Human Activity Recognition - Practical Machine Learning"
+author: "Wojciech Gajewski"
+date: "20.06.2015"
+output:
+  html_document:
+    keep_md: yes
+---
+
+# Introduction
+
+In this writeup the data from [Human Activity Recognition](http://groupware.les.inf.puc-rio.br/har) website is used, namely the **Weight Lifting Exercise Dataset**. This data represents measurements made using specific devices of people performing a specific type of physical excercise (barbell lifts).
+
+The goal is to create a maching learning model predicting if a given exercise recording represents a correct execution ("classe" predictor).
+
+# Data Preprocessing
+
+The data is preprocessed in the following way:
+
+* All of the columns containing only NAs are eliminated,
+* All of the columns containing a word timestamp in the name are eliminated (we are interested in the movement of an observed human),
+* Removing the columns "user_name", "new_window", "X", and "num_window",
+* Removing all columns that have less then 90% fill ratio.
+
+```{r echo=TRUE, cache=TRUE}
+library(plyr)
+library(ggplot2)
+library(caret)
+training <- read.csv("pml-training.csv")
+training <- training[, colSums(is.na(training)) == 0]
+training <- training[, colSums(training != "")  > (nrow(training) * 0.9)]
+training <- training[,grep("timestamp", names(training), invert=TRUE)]
+training <- training[,grep("user_name", names(training), invert=TRUE)]
+training <- training[,grep("new_window", names(training), invert=TRUE)]
+training <- training[,grep("num_window", names(training), invert=TRUE)]
+training <- training[,grep("X", names(training), invert=TRUE)]
+
+testing <- read.csv("pml-testing.csv")
+testing <- testing[, colSums(is.na(testing)) == 0]
+testing <- testing[, colSums(testing != "")  > (nrow(testing) * 0.9)]
+testing <- testing[,grep("timestamp", names(testing), invert=TRUE)]
+testing <- testing[,grep("user_name", names(testing), invert=TRUE)]
+testing <- testing[,grep("new_window", names(testing), invert=TRUE)]
+testing <- testing[,grep("num_window", names(testing), invert=TRUE)]
+testing <- testing[,grep("X", names(testing), invert=TRUE)]
+
+```
+
+# Model Selection, Training and Comparison
+
+As we have so many (more than 50) predictors in the potential model, first the decision tree is trained using the "rpart" package and with cross-validation. No preprocessing of variables is performed.
+
+The out-of-sample error is going to be evaluated using repeated cross-validation on the training set.
+
+```{r echo=TRUE, cache=TRUE}
+ctrl <- trainControl(method = "repeatedcv", number=2, repeats=3)
+modelRPartNonScaled <- train(classe ~., data=training, method="rpart", trControl=ctrl, metric="Kappa")
+```
+The Kappa for this model is `r modelRPartNonScaled$results$Kappa[1]` (and accuracy of `r modelRPartNonScaled$results$Accuracy[1]`).
+
+The same model will be now re-trained but using repeated cross-validation with the factor of 3.
+```{r echo=TRUE, cache=TRUE}
+ctrl <- trainControl(method = "repeatedcv", repeats=3, number=2)
+modelRPartNonScaledRCV <- train(classe ~., data=training, method="rpart", trControl=ctrl, metric="Kappa")
+```
+
+The quality metrics of this model stay approximately the same (Kappa = `r modelRPartNonScaledRCV$results$Kappa[1]`).
+
+Next, the pre-processing of the predictors is investigated. A simple setup with centering and scaling is taken into account first:
+
+```{r echo=TRUE, cache=TRUE}
+ctrl <- trainControl(method = "repeatedcv", repeats=3, number=2)
+modelRPartSimpleScaledRCV <- train(classe ~., data=training, method="rpart", trControl=ctrl, metric="Kappa", preProc = c("center", "scale"))
+```
+Again, the quality metrics stay approximately the same (Kappa = `r modelRPartSimpleScaledRCV$results$Kappa[1]`).
+
+As an alternative to decision trees, we investigate the performance of the random forests as a predicting solution:
+```{r echo=TRUE, cache=TRUE}
+ctrl <- trainControl(method = "repeatedcv", number=2, p=0.1)
+modelRF <- train(classe ~., data=training, method="rf", trControl=ctrl, metric="Kappa")
+```
+
+Here, the model shows a considerable improvement of Kappa=`r modelRF$results$Kappa[1]`.
+
+Finally, the k-Nearest Neighbors models is evaluated:
+```{r echo=TRUE, cache=TRUE}
+ctrl <- trainControl(method = "repeatedcv", number=2, p=0.1)
+modelKNN <- train(classe ~., data=training, method="knn", trControl=ctrl, metric="Kappa")
+```
+
+The model has a Kappa of `r modelKNN$results$Kappa[1]`, therefore visibly worse than the random forest.
+
+Out of the models tried out, random forest is by far the best of all of the models.
+
+The OOB estimate of error rate is qual to 0.3%:
+```{r echo=TRUE, cache=TRUE}
+modelRF$finalModel
+```
+
+# Predicting the Testing Set
+
+The random forest model is applied to the testing set:
+```{r echo=TRUE, cache=TRUE}
+predict(modelRF, newdata=testing)
+```
